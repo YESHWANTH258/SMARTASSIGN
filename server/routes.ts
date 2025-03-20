@@ -15,6 +15,7 @@ import multer from "multer";
 import fs from "fs";
 import path from "path";
 import { v4 as uuidv4 } from "uuid";
+import { PDFExtract } from 'pdf.js-extract';
 
 // Setup multer for file uploads
 const upload = multer({
@@ -1247,14 +1248,54 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
       
-      // Read file content (in a real app, you'd process different file types differently)
-      const fileContent = fs.readFileSync(req.file.path, 'utf8');
+      // Read file content based on file type
+      let fileContent: string;
+      const fileExtension = path.extname(req.file.originalname).toLowerCase();
+      const fileType = fileExtension.substring(1);
+      
+      // Initialize PDF extractor
+      const pdfExtract = new PDFExtract();
+      
+      // Handle PDF files
+      if (fileExtension === '.pdf') {
+        try {
+          const result = await pdfExtract.extract(req.file.path, {});
+          // Combine all page content into a single text
+          fileContent = result.pages
+            .map(page => page.content.map(item => item.str).join(' '))
+            .join('\n\n');
+            
+          console.log("Successfully extracted text from PDF");
+        } catch (pdfError) {
+          console.error('Error parsing PDF:', pdfError);
+          return res.status(400).json({ 
+            message: "Failed to parse PDF file. Please ensure it's a valid PDF with text content." 
+          });
+        }
+      } else {
+        // For other file types (text-based)
+        try {
+          fileContent = fs.readFileSync(req.file.path, 'utf8');
+        } catch (readError) {
+          console.error('Error reading file:', readError);
+          return res.status(400).json({ 
+            message: "Failed to read file. Please ensure it's a text-based file or PDF." 
+          });
+        }
+      }
+      
+      // Check if we successfully extracted content
+      if (!fileContent || fileContent.trim().length === 0) {
+        return res.status(400).json({ 
+          message: "Could not extract text content from the file. Please try a different file." 
+        });
+      }
       
       const material = await storage.createMaterial({
         teacherId: user.id,
         title,
         content: fileContent,
-        fileType: path.extname(req.file.originalname).substring(1)
+        fileType
       });
       
       return res.status(201).json({
