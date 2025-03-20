@@ -1,3 +1,4 @@
+import fs from 'fs';
 import { 
   users, type User, type InsertUser, 
   type WaitlistEntry, type InsertWaitlistEntry,
@@ -53,21 +54,56 @@ export class MemStorage implements IStorage {
   currentAssignmentId: number;
   currentSubmissionId: number;
 
+  private storageFile = 'db.json';
+
   constructor() {
-    this.users = new Map();
-    this.waitlistEntries = new Map();
-    this.materials = new Map();
-    this.assignments = new Map();
-    this.submissions = new Map();
-    
-    this.currentUserId = 1;
-    this.currentWaitlistId = 1;
-    this.currentMaterialId = 1;
-    this.currentAssignmentId = 1;
-    this.currentSubmissionId = 1;
-    
-    // Create demo users
-    this.createInitialUsers();
+    // Load data from file if exists
+    try {
+      const data = JSON.parse(fs.readFileSync(this.storageFile, 'utf8'));
+      this.users = new Map(data.users);
+      this.waitlistEntries = new Map(data.waitlistEntries);
+      this.materials = new Map(data.materials);
+      this.assignments = new Map(data.assignments);
+      this.submissions = new Map(data.submissions);
+      
+      this.currentUserId = data.currentUserId;
+      this.currentWaitlistId = data.currentWaitlistId;
+      this.currentMaterialId = data.currentMaterialId;
+      this.currentAssignmentId = data.currentAssignmentId;
+      this.currentSubmissionId = data.currentSubmissionId;
+    } catch {
+      // Initialize empty if file doesn't exist
+      this.users = new Map();
+      this.waitlistEntries = new Map();
+      this.materials = new Map();
+      this.assignments = new Map();
+      this.submissions = new Map();
+      
+      this.currentUserId = 1;
+      this.currentWaitlistId = 1;
+      this.currentMaterialId = 1;
+      this.currentAssignmentId = 1;
+      this.currentSubmissionId = 1;
+      
+      // Create demo users
+      this.createInitialUsers();
+    }
+  }
+
+  private saveToFile() {
+    const data = {
+      users: Array.from(this.users.entries()),
+      waitlistEntries: Array.from(this.waitlistEntries.entries()),
+      materials: Array.from(this.materials.entries()),
+      assignments: Array.from(this.assignments.entries()),
+      submissions: Array.from(this.submissions.entries()),
+      currentUserId: this.currentUserId,
+      currentWaitlistId: this.currentWaitlistId,
+      currentMaterialId: this.currentMaterialId,
+      currentAssignmentId: this.currentAssignmentId,
+      currentSubmissionId: this.currentSubmissionId
+    };
+    fs.writeFileSync(this.storageFile, JSON.stringify(data));
   }
   
   private createInitialUsers() {
@@ -156,6 +192,7 @@ export class MemStorage implements IStorage {
       createdAt: new Date()
     };
     this.materials.set(id, material);
+    this.saveToFile();
     return material;
   }
   
