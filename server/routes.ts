@@ -33,187 +33,685 @@ const upload = multer({
   })
 });
 
-// AI functions to analyze text and generate questions
+// Advanced AI functions to analyze text and generate highly relevant questions
 async function generateQuestionsFromText(text: string, count: number = 5): Promise<Question[]> {
-  // Extract key concepts from the text for better question generation
-  const textLines = text.split(/\r?\n/).filter(line => line.trim().length > 0);
+  // Process and analyze the text content
+  const textContent = preprocessText(text);
   const questions: Question[] = [];
   
-  // Determine how many of each question type to generate
-  const mcqCount = Math.ceil(count * 0.4); // 40% multiple choice
-  const shortAnswerCount = Math.ceil(count * 0.4); // 40% short answer
-  const essayCount = count - mcqCount - shortAnswerCount; // Remaining for essay
+  // Extract key topics and concepts from the text
+  const topics = extractTopics(textContent);
+  const definitions = extractDefinitions(textContent);
+  const processes = extractProcesses(textContent);
+  const comparisons = extractComparisons(textContent);
   
-  // Track used sentences to avoid duplicates
-  const usedTextSections = new Set<string>();
+  // Determine question distribution based on content analysis
+  const mcqCount = Math.max(1, Math.ceil(count * 0.4)); // At least 1 MCQ
+  const shortAnswerCount = Math.max(1, Math.ceil(count * 0.4)); // At least 1 short answer
+  const essayCount = Math.max(1, count - mcqCount - shortAnswerCount); // At least 1 essay if possible
   
-  // Function to get a random substantial section of text (paragraph or sentence)
-  const getRandomTextSection = (): string => {
-    // Try to find paragraphs first (more context for questions)
-    const paragraphs = text.split(/\r?\n\r?\n/).filter(p => p.trim().length > 30);
-    
-    if (paragraphs.length > 0) {
-      let attempts = 0;
-      while (attempts < 10) {
-        const randomParagraph = paragraphs[Math.floor(Math.random() * paragraphs.length)];
-        if (!usedTextSections.has(randomParagraph)) {
-          usedTextSections.add(randomParagraph);
-          return randomParagraph;
-        }
-        attempts++;
+  // Generate Multiple Choice Questions - focus on facts and definitions
+  const mcQuestions = generateMultipleChoiceQuestions(
+    textContent, 
+    topics, 
+    definitions,
+    mcqCount
+  );
+  questions.push(...mcQuestions);
+  
+  // Generate Short Answer Questions - focus on processes and explanations
+  const shortAnswerQuestions = generateShortAnswerQuestions(
+    textContent,
+    processes,
+    definitions,
+    shortAnswerCount
+  );
+  questions.push(...shortAnswerQuestions);
+  
+  // Generate Essay Questions - focus on analysis and synthesis
+  const essayQuestions = generateEssayQuestions(
+    textContent,
+    topics,
+    comparisons,
+    essayCount
+  );
+  questions.push(...essayQuestions);
+  
+  // Ensure unique IDs for all questions
+  questions.forEach((q, index) => {
+    q.id = index + 1;
+  });
+  
+  return questions;
+}
+
+// Text preprocessing - clean and structure the text
+function preprocessText(text: string): any {
+  // Remove extra whitespace and split into sensible units
+  const cleanedText = text.replace(/\s+/g, ' ').trim();
+  
+  // Split into paragraphs
+  const paragraphs = cleanedText.split(/\n\s*\n/).map(p => p.trim()).filter(p => p.length > 20);
+  
+  // Extract sentences from each paragraph
+  const allSentences: string[] = [];
+  paragraphs.forEach(para => {
+    const sentences = para.match(/[^.!?]+[.!?]+/g) || [];
+    sentences.forEach(s => {
+      const cleanSentence = s.trim();
+      if (cleanSentence.length > 15) { // Only substantial sentences
+        allSentences.push(cleanSentence);
       }
-    }
-    
-    // Fall back to sentences if we can't find unused paragraphs
-    const sentences = text.match(/[^.!?]+[.!?]+/g) || [];
-    const substantialSentences = sentences.filter(s => s.trim().length > 20);
-    
-    if (substantialSentences.length > 0) {
-      let attempts = 0;
-      while (attempts < 10) {
-        const randomSentence = substantialSentences[Math.floor(Math.random() * substantialSentences.length)];
-        if (!usedTextSections.has(randomSentence)) {
-          usedTextSections.add(randomSentence);
-          return randomSentence;
-        }
-        attempts++;
-      }
-    }
-    
-    // Last resort - just use a line
-    return textLines[Math.floor(Math.random() * textLines.length)];
+    });
+  });
+  
+  // Identify potential section headings
+  const potentialHeadings = text.split('\n')
+    .map(line => line.trim())
+    .filter(line => 
+      line.length > 0 && 
+      line.length < 100 && 
+      !line.endsWith('.') && 
+      (line === line.toUpperCase() || /^[A-Z][a-z]+(\s+[A-Z][a-z]+)*$/.test(line))
+    );
+  
+  return {
+    fullText: cleanedText,
+    paragraphs,
+    sentences: allSentences,
+    potentialHeadings
   };
+}
+
+// Extract key topics from the text
+function extractTopics(textContent: any): string[] {
+  const { paragraphs, potentialHeadings, sentences } = textContent;
+  const topics: string[] = [...potentialHeadings];
   
-  // Generate multiple choice questions
-  for (let i = 0; i < mcqCount; i++) {
-    const section = getRandomTextSection();
-    const words = section.split(/\s+/).filter(w => w.length > 4);
+  // Extract nouns and noun phrases as potential topics
+  const nounPhrasePattern = /\b[A-Z][a-z]*((\s+(of|in|for|to|with|by|and|or)\s+|\s+)[A-Za-z][a-z]*){0,2}\b/g;
+  
+  // Get first sentences from paragraphs (often contain topic statements)
+  const firstSentences = paragraphs.map(p => {
+    const match = p.match(/^[^.!?]+[.!?]+/) || [];
+    return match[0] || '';
+  }).filter(s => s.length > 0);
+  
+  // Find repeated terms (frequency analysis for important concepts)
+  const wordCounts: Record<string, number> = {};
+  const words = textContent.fullText.toLowerCase().match(/\b[a-z]{4,}\b/g) || [];
+  words.forEach((word: string) => {
+    if (!/^(and|the|that|this|with|from|have|for|are|not|but|were|when|what|they|their|these|those|then|than)$/.test(word)) {
+      wordCounts[word] = (wordCounts[word] || 0) + 1;
+    }
+  });
+  
+  // Get top repeated terms
+  const topTerms = Object.entries(wordCounts)
+    .filter(([_, count]) => (count as number) > 2) // Only terms that appear multiple times
+    .sort((a, b) => (b[1] as number) - (a[1] as number)) // Sort by frequency
+    .slice(0, 10) // Top 10
+    .map(([term, _]) => term);
+  
+  // Extract noun phrases from first sentences and headings
+  const relevantText = [...firstSentences, ...potentialHeadings].join(' ');
+  let match;
+  while ((match = nounPhrasePattern.exec(relevantText)) !== null) {
+    if (match[0].length > 5 && !topics.includes(match[0])) {
+      topics.push(match[0]);
+    }
+  }
+  
+  // Combine with top terms to create comprehensive topic list
+  return [...new Set([...topics, ...topTerms])].slice(0, 15); // Limit to 15 topics
+}
+
+// Extract definitions from text
+function extractDefinitions(textContent: any): Array<{term: string, definition: string}> {
+  const { sentences } = textContent;
+  const definitions: Array<{term: string, definition: string}> = [];
+  
+  // Pattern 1: "X is/are defined as Y", "X is/are Y", "X refers to Y"
+  const definitionPatterns = [
+    /\b([A-Za-z][A-Za-z\s-]{2,})\s+is\s+defined\s+as\s+([^.]+)/i,
+    /\b([A-Za-z][A-Za-z\s-]{2,})\s+refers\s+to\s+([^.]+)/i,
+    /\b([A-Za-z][A-Za-z\s-]{2,})\s+means\s+([^.]+)/i,
+    /\b([A-Za-z][A-Za-z\s-]{2,})\s+is\s+a\s+([^.]+)/i,
+    /\b([A-Za-z][A-Za-z\s-]{2,})\s+is\s+an\s+([^.]+)/i,
+    /\b([A-Za-z][A-Za-z\s-]{2,})\s+are\s+([^.]+that)/i
+  ];
+  
+  sentences.forEach(sentence => {
+    for (const pattern of definitionPatterns) {
+      const match = sentence.match(pattern);
+      if (match && match[1] && match[2]) {
+        const term = match[1].trim();
+        const definition = match[2].trim();
+        
+        // Only add if term is reasonable length and not a common word
+        if (term.length > 3 && !/^(this|that|those|these|they|them|their|there|where|when|what|who|why|how)$/i.test(term)) {
+          definitions.push({ term, definition: sentence });
+        }
+      }
+    }
+  });
+  
+  // Pattern 2: Look for sentences with colon definitions
+  sentences.forEach(sentence => {
+    if (sentence.includes(':')) {
+      const parts = sentence.split(':');
+      if (parts.length === 2 && parts[0].length < 50) {
+        const term = parts[0].trim();
+        const definition = parts[1].trim();
+        
+        // Only add if term is reasonable length and definition is substantial
+        if (term.length > 3 && definition.length > 15) {
+          definitions.push({ term, definition: sentence });
+        }
+      }
+    }
+  });
+  
+  return definitions;
+}
+
+// Extract processes or sequential explanations from text
+function extractProcesses(textContent: any): Array<{topic: string, steps: string}> {
+  const { paragraphs } = textContent;
+  const processes: Array<{topic: string, steps: string}> = [];
+  
+  // Look for numbered or sequential paragraphs
+  const sequentialIndicators = [
+    /first.*then.*finally/i,
+    /step\s+\d+/i,
+    /^\s*\d+\.\s+/m,
+    /first.*second.*third/i,
+    /initially.*subsequently.*finally/i,
+    /begin.*then.*finally/i
+  ];
+  
+  paragraphs.forEach(paragraph => {
+    for (const pattern of sequentialIndicators) {
+      if (pattern.test(paragraph)) {
+        // Extract a likely topic from the first line
+        const firstLine = paragraph.split('\n')[0];
+        const topic = firstLine.length < 60 ? firstLine : firstLine.substring(0, 50) + '...';
+        
+        processes.push({
+          topic,
+          steps: paragraph
+        });
+        break;
+      }
+    }
+  });
+  
+  // Also look for paragraphs that contain transition words indicating sequence
+  const sequenceWords = ['first', 'second', 'third', 'next', 'then', 'finally', 'lastly', 'subsequently'];
+  paragraphs.forEach(paragraph => {
+    let sequenceWordCount = 0;
+    sequenceWords.forEach(word => {
+      if (paragraph.toLowerCase().includes(` ${word} `)) {
+        sequenceWordCount++;
+      }
+    });
     
-    // Generate a question about this section
-    let questionText = "";
+    if (sequenceWordCount >= 2 && !processes.some(p => p.steps === paragraph)) {
+      const firstSentence = paragraph.match(/^[^.!?]+[.!?]+/);
+      const topic = firstSentence ? firstSentence[0] : paragraph.substring(0, 50) + '...';
+      
+      processes.push({
+        topic,
+        steps: paragraph
+      });
+    }
+  });
+  
+  return processes;
+}
+
+// Extract comparisons and contrasts from text
+function extractComparisons(textContent: any): Array<{elements: string[], context: string}> {
+  const { paragraphs, sentences } = textContent;
+  const comparisons: Array<{elements: string[], context: string}> = [];
+  
+  // Look for comparison indicators
+  const comparisonPatterns = [
+    /\b(compared to|in comparison|in contrast|versus|vs\.?|difference between|similarities between|both|while|whereas|unlike)\b/i,
+    /\b(advantage|disadvantage|benefit|drawback|pro|con)\b/i,
+    /\b(better|worse|more|less|greater|lesser|higher|lower|stronger|weaker)\b.*\b(than)\b/i
+  ];
+  
+  // Check paragraphs for comparison content
+  paragraphs.forEach(paragraph => {
+    for (const pattern of comparisonPatterns) {
+      if (pattern.test(paragraph)) {
+        // Try to extract the elements being compared
+        const elements: string[] = [];
+        
+        // Look for "X and Y" or "X vs Y" patterns
+        const andPattern = /\b([A-Za-z][A-Za-z\s]{2,})\s+and\s+([A-Za-z][A-Za-z\s]{2,})\b/g;
+        const vsPattern = /\b([A-Za-z][A-Za-z\s]{2,})\s+(?:versus|vs\.?)\s+([A-Za-z][A-Za-z\s]{2,})\b/g;
+        
+        let match;
+        while ((match = andPattern.exec(paragraph)) !== null) {
+          if (match[1] && match[2]) {
+            elements.push(match[1].trim(), match[2].trim());
+          }
+        }
+        
+        while ((match = vsPattern.exec(paragraph)) !== null) {
+          if (match[1] && match[2]) {
+            elements.push(match[1].trim(), match[2].trim());
+          }
+        }
+        
+        // If we found elements, add the comparison
+        if (elements.length > 0 || paragraph.length < 500) {
+          comparisons.push({
+            elements: [...new Set(elements)], // Remove duplicates
+            context: paragraph
+          });
+          break; // Found a comparison, move to next paragraph
+        }
+      }
+    }
+  });
+  
+  // Also check individual sentences for shorter comparisons
+  sentences.forEach(sentence => {
+    for (const pattern of comparisonPatterns) {
+      if (pattern.test(sentence) && !comparisons.some(c => c.context.includes(sentence))) {
+        const elements: string[] = [];
+        
+        // Extract potential comparison elements
+        const betweenPattern = /\bbetween\s+([A-Za-z][A-Za-z\s]{2,})\s+and\s+([A-Za-z][A-Za-z\s]{2,})\b/i;
+        const thanPattern = /\b([A-Za-z][A-Za-z\s]{2,})\s+than\s+([A-Za-z][A-Za-z\s]{2,})\b/i;
+        
+        let match = sentence.match(betweenPattern);
+        if (match && match[1] && match[2]) {
+          elements.push(match[1].trim(), match[2].trim());
+        }
+        
+        match = sentence.match(thanPattern);
+        if (match && match[1] && match[2]) {
+          elements.push(match[1].trim(), match[2].trim());
+        }
+        
+        if (elements.length > 0) {
+          comparisons.push({
+            elements: [...new Set(elements)],
+            context: sentence
+          });
+        }
+      }
+    }
+  });
+  
+  return comparisons;
+}
+
+// Generate Multiple Choice Questions based on content analysis
+function generateMultipleChoiceQuestions(
+  textContent: any, 
+  topics: string[], 
+  definitions: Array<{term: string, definition: string}>,
+  count: number
+): Question[] {
+  const questions: Question[] = [];
+  
+  // First prioritize definition-based questions (more precise)
+  for (let i = 0; i < Math.min(definitions.length, Math.ceil(count * 0.6)); i++) {
+    const def = definitions[i];
     
-    // Different question patterns
-    const patterns = [
-      "What is the main concept described in the following text: ",
-      "According to the material, which of the following best describes ",
-      "Which statement correctly reflects the information about ",
-      "Based on the content, what can be inferred about ",
-      "What is the significance of "
+    // Create question text
+    const questionPatterns = [
+      `What is the definition of ${def.term}?`,
+      `Which of the following best describes ${def.term}?`,
+      `${def.term} is best defined as:`,
+      `According to the material, what does the term ${def.term} mean?`
     ];
     
-    // Extract a key term if possible
-    const keyTerms = words.filter(w => w.length > 5);
-    const keyTerm = keyTerms.length > 0 ? 
-      keyTerms[Math.floor(Math.random() * keyTerms.length)] : 
-      "the concept";
+    const questionText = questionPatterns[i % questionPatterns.length];
     
-    // Create the question
-    questionText = patterns[i % patterns.length] + keyTerm + "?";
+    // Create correct answer from the definition
+    const correctAnswer = def.definition.length > 60 ? 
+      def.definition.substring(0, 60) + '...' : 
+      def.definition;
     
-    // Create plausible options including the correct one
-    const correctAnswer = section.substr(0, 40) + "...";
-    const options = [
-      correctAnswer,
-      "This concept is not addressed in the material.",
-      "The opposite of what the material suggests.",
-      "A different perspective than what's presented."
+    // Generate plausible distractors (incorrect options)
+    const otherDefinitions = definitions
+      .filter(d => d.term !== def.term)
+      .map(d => d.definition.length > 60 ? d.definition.substring(0, 60) + '...' : d.definition)
+      .slice(0, 3);
+    
+    // Fallback distractors if not enough other definitions
+    const fallbackDistractors = [
+      `A concept not related to ${def.term}.`,
+      `The opposite of what ${def.term} actually means.`,
+      `A different concept from another section of the material.`
     ];
     
-    // Shuffle options
+    // Combine and limit options
+    let options = [correctAnswer];
+    
+    // Add real distractors first
+    options = [...options, ...otherDefinitions];
+    
+    // Add fallback distractors if needed
+    while (options.length < 4) {
+      options.push(fallbackDistractors[options.length - 1]);
+    }
+    
+    // Limit to 4 options and shuffle
+    options = options.slice(0, 4);
     for (let j = options.length - 1; j > 0; j--) {
       const k = Math.floor(Math.random() * (j + 1));
       [options[j], options[k]] = [options[k], options[j]];
     }
     
     questions.push({
-      id: i + 1,
+      id: i + 1, // Will be updated later
       type: "multiple_choice",
       text: questionText,
       options: options,
       correctAnswer: correctAnswer,
-      points: Math.floor(Math.random() * 3) + 1 // 1-3 points
+      points: 2 // Standard points for definition questions
     });
   }
   
-  // Generate short answer questions
-  for (let i = 0; i < shortAnswerCount; i++) {
-    const section = getRandomTextSection();
-    const words = section.split(/\s+/).filter(w => w.length > 4);
+  // Add topic-based questions if needed
+  const remainingCount = count - questions.length;
+  
+  if (remainingCount > 0 && topics.length > 0) {
+    const { sentences } = textContent;
     
-    // Different question patterns
-    const patterns = [
-      "Provide a brief explanation of ",
-      "Define the term ",
-      "What is meant by ",
-      "Briefly describe ",
-      "Explain the concept of "
+    // Find sentences containing each topic
+    const topicSentences: Record<string, string[]> = {};
+    
+    topics.forEach(topic => {
+      topicSentences[topic] = sentences.filter(s => 
+        s.toLowerCase().includes(topic.toLowerCase())
+      );
+    });
+    
+    // Generate questions for topics with sufficient context
+    const viableTopics = topics.filter(t => topicSentences[t].length > 0);
+    
+    for (let i = 0; i < Math.min(viableTopics.length, remainingCount); i++) {
+      const topic = viableTopics[i];
+      const relevantSentences = topicSentences[topic];
+      
+      // Select a sentence with good content
+      const sentence = relevantSentences.find(s => s.length > 30 && s.length < 200) || relevantSentences[0];
+      
+      // Create question text
+      const questionPatterns = [
+        `Which of the following statements about ${topic} is correct?`,
+        `According to the material, which statement accurately describes ${topic}?`,
+        `What does the material state about ${topic}?`,
+        `Which of these is true about ${topic} based on the text?`
+      ];
+      
+      const questionText = questionPatterns[i % questionPatterns.length];
+      
+      // Correct answer is from the text
+      const correctAnswer = sentence.length > 60 ? 
+        sentence.substring(0, 60) + '...' : 
+        sentence;
+      
+      // Generate incorrect options
+      const oppositeStatement = `${topic} is not significant in this context.`;
+      const unrelatedStatement = `${topic} is unrelated to the main themes of the material.`;
+      const misleadingStatement = `${topic} can only be understood in relation to external factors not covered in the material.`;
+      
+      const options = [
+        correctAnswer,
+        oppositeStatement,
+        unrelatedStatement,
+        misleadingStatement
+      ];
+      
+      // Shuffle options
+      for (let j = options.length - 1; j > 0; j--) {
+        const k = Math.floor(Math.random() * (j + 1));
+        [options[j], options[k]] = [options[k], options[j]];
+      }
+      
+      questions.push({
+        id: questions.length + 1, // Will be updated later
+        type: "multiple_choice",
+        text: questionText,
+        options: options,
+        correctAnswer: correctAnswer,
+        points: 2 // Standard points for topic questions
+      });
+    }
+  }
+  
+  return questions.slice(0, count);
+}
+
+// Generate Short Answer Questions based on content analysis
+function generateShortAnswerQuestions(
+  textContent: any,
+  processes: Array<{topic: string, steps: string}>,
+  definitions: Array<{term: string, definition: string}>,
+  count: number
+): Question[] {
+  const questions: Question[] = [];
+  const { sentences, paragraphs } = textContent;
+  
+  // Generate process-based questions (explain a process/steps)
+  for (let i = 0; i < Math.min(processes.length, Math.ceil(count * 0.5)); i++) {
+    const process = processes[i];
+    
+    // Create question text
+    const questionPatterns = [
+      `Briefly explain the process of ${process.topic}.`,
+      `What are the main steps involved in ${process.topic}?`,
+      `Describe how ${process.topic} works.`,
+      `Summarize the key stages of ${process.topic}.`
     ];
     
-    // Extract a key term if possible
-    const keyTerms = words.filter(w => w.length > 5);
-    const keyTerm = keyTerms.length > 0 ? 
-      keyTerms[Math.floor(Math.random() * keyTerms.length)] : 
-      "this concept";
+    const questionText = questionPatterns[i % questionPatterns.length];
     
-    // Create the question
-    const questionText = patterns[(i + mcqCount) % patterns.length] + keyTerm + ".";
+    // Extract key steps for expected answer
+    const correctAnswer = process.steps.length > 80 ? 
+      process.steps.substring(0, 80) + '...' : 
+      process.steps;
     
     questions.push({
-      id: mcqCount + i + 1,
+      id: i + 1, // Will be updated later
       type: "short_answer",
       text: questionText,
-      correctAnswer: section.substr(0, 50) + "...", // First part of the section as correct answer
-      points: Math.floor(Math.random() * 2) + 2 // 2-3 points
+      correctAnswer: correctAnswer,
+      points: 3 // Higher points for process questions (more complex)
     });
   }
   
-  // Generate essay questions
-  for (let i = 0; i < essayCount; i++) {
-    // For essays, we'll use broader topics from the document
+  // Add definition explanation questions if needed
+  const remainingCount = count - questions.length;
+  
+  if (remainingCount > 0 && definitions.length > 0) {
+    // Use definitions not already used in MCQs
+    const usedTerms = new Set(questions.map(q => 
+      q.text.match(/of\s+([^.?]+)\./) || q.text.match(/in\s+([^.?]+)\?/)
+    ).filter(Boolean).map(m => m![1]));
     
-    // Different essay prompt patterns
-    const patterns = [
-      "Analyze and discuss the implications of ",
-      "Compare and contrast the different aspects of ",
-      "Evaluate the significance of ",
-      "Critically examine ",
-      "Discuss the relationship between "
-    ];
+    const unusedDefinitions = definitions.filter(d => !usedTerms.has(d.term));
     
-    // Try to identify document themes
-    let theme = "";
-    if (textLines.length > 0) {
-      // Check first few lines for potential title/theme
-      const potentialThemes = textLines.slice(0, Math.min(5, textLines.length))
-        .filter(line => line.length > 10 && line.length < 100);
+    for (let i = 0; i < Math.min(unusedDefinitions.length, remainingCount); i++) {
+      const def = unusedDefinitions[i];
       
-      if (potentialThemes.length > 0) {
-        theme = potentialThemes[Math.floor(Math.random() * potentialThemes.length)];
-      } else {
-        // Fallback to a random substantial line
-        theme = getRandomTextSection();
-      }
+      // Create question text
+      const questionPatterns = [
+        `Explain the concept of ${def.term} in your own words.`,
+        `What do we mean by ${def.term} in this context?`,
+        `Define ${def.term} and provide a brief explanation.`,
+        `Describe what ${def.term} means according to the material.`
+      ];
+      
+      const questionText = questionPatterns[i % questionPatterns.length];
+      
+      // Expected answer comes from the definition
+      const correctAnswer = def.definition;
+      
+      questions.push({
+        id: questions.length + 1, // Will be updated later
+        type: "short_answer",
+        text: questionText,
+        correctAnswer: correctAnswer,
+        points: 2 // Standard points for definition explanations
+      });
+    }
+  }
+  
+  // Add general explanation questions if still needed
+  if (questions.length < count && paragraphs.length > 0) {
+    const substantialParagraphs = paragraphs.filter(p => p.length > 50 && p.length < 300);
+    
+    for (let i = 0; i < Math.min(substantialParagraphs.length, count - questions.length); i++) {
+      const paragraph = substantialParagraphs[i];
+      const firstSentence = paragraph.match(/^[^.!?]+[.!?]+/);
+      const topic = firstSentence ? 
+        firstSentence[0].replace(/[.!?]+$/, '') : 
+        paragraph.substring(0, 30) + '...';
+      
+      // Create question text
+      const questionPatterns = [
+        `Briefly explain: ${topic}.`,
+        `Summarize what the material says about: ${topic}.`,
+        `What information does the text provide about ${topic}?`,
+        `Explain the significance of ${topic} according to the material.`
+      ];
+      
+      const questionText = questionPatterns[i % questionPatterns.length];
+      
+      // Expected answer comes from the paragraph
+      const correctAnswer = paragraph.length > 80 ? 
+        paragraph.substring(0, 80) + '...' : 
+        paragraph;
+      
+      questions.push({
+        id: questions.length + 1, // Will be updated later
+        type: "short_answer",
+        text: questionText,
+        correctAnswer: correctAnswer,
+        points: 2 // Standard points
+      });
+    }
+  }
+  
+  return questions.slice(0, count);
+}
+
+// Generate Essay Questions based on content analysis
+function generateEssayQuestions(
+  textContent: any,
+  topics: string[],
+  comparisons: Array<{elements: string[], context: string}>,
+  count: number
+): Question[] {
+  const questions: Question[] = [];
+  
+  // Generate comparison-based essay questions
+  for (let i = 0; i < Math.min(comparisons.length, Math.ceil(count * 0.6)); i++) {
+    const comparison = comparisons[i];
+    let questionText = "";
+    
+    if (comparison.elements.length >= 2) {
+      // Create question text based on explicit elements
+      const element1 = comparison.elements[0];
+      const element2 = comparison.elements[1];
+      
+      const questionPatterns = [
+        `Compare and contrast ${element1} and ${element2} as presented in the material.`,
+        `Analyze the similarities and differences between ${element1} and ${element2}.`,
+        `Discuss how ${element1} and ${element2} are related and how they differ.`,
+        `Evaluate the relative importance of ${element1} versus ${element2} based on the text.`
+      ];
+      
+      questionText = questionPatterns[i % questionPatterns.length];
     } else {
-      theme = "the concepts presented in the material";
+      // Create question from the comparison context
+      const contextTopic = comparison.context.substring(0, 50).replace(/[.!?]+$/, '') + '...';
+      
+      const questionPatterns = [
+        `Analyze the comparison presented regarding ${contextTopic}`,
+        `Discuss the contrasting elements in the following context: ${contextTopic}`,
+        `Evaluate the relative merits of the different approaches related to ${contextTopic}`,
+        `Compare and contrast the different perspectives on ${contextTopic}`
+      ];
+      
+      questionText = questionPatterns[i % questionPatterns.length];
     }
     
-    // Create the prompt
-    const questionText = patterns[(i + mcqCount + shortAnswerCount) % patterns.length] + 
-      theme + " as presented in the material.";
-    
     questions.push({
-      id: mcqCount + shortAnswerCount + i + 1,
+      id: i + 1, // Will be updated later
       type: "essay",
       text: questionText,
-      points: Math.floor(Math.random() * 2) + 3 // 3-4 points
+      points: 4 // Higher points for comparative analysis
     });
   }
   
-  return questions;
+  // Add broad topic-based essay questions if needed
+  const remainingCount = count - questions.length;
+  
+  if (remainingCount > 0 && topics.length > 0) {
+    const broadTopics = topics.filter(t => t.length > 5);
+    
+    for (let i = 0; i < Math.min(broadTopics.length, remainingCount); i++) {
+      const topic = broadTopics[i];
+      
+      // Create question text
+      const questionPatterns = [
+        `Discuss the importance and implications of ${topic} as presented in the material.`,
+        `Critically analyze the concept of ${topic} and its relevance to the subject matter.`,
+        `Explain the key aspects of ${topic} and how they contribute to our understanding.`,
+        `Evaluate how the material presents ${topic} and discuss its significance.`
+      ];
+      
+      const questionText = questionPatterns[i % questionPatterns.length];
+      
+      questions.push({
+        id: questions.length + 1, // Will be updated later
+        type: "essay",
+        text: questionText,
+        points: 3 // Standard points for topic essays
+      });
+    }
+  }
+  
+  // Add synthesis questions if still needed
+  if (questions.length < count) {
+    const { potentialHeadings } = textContent;
+    const mainThemes = potentialHeadings.length > 1 ? 
+      potentialHeadings.slice(0, 2).join(' and ') : 
+      (topics.length > 0 ? topics[0] : 'the main themes');
+    
+    const synthesisPatterns = [
+      `Synthesize the key concepts from the material and explain how they relate to ${mainThemes}.`,
+      `Discuss how the various elements of ${mainThemes} presented in the material work together as a whole.`,
+      `Analyze the relationship between the different components of ${mainThemes} discussed in the text.`,
+      `Evaluate the overall significance of ${mainThemes} based on all the information presented.`
+    ];
+    
+    for (let i = 0; i < count - questions.length; i++) {
+      questions.push({
+        id: questions.length + 1, // Will be updated later
+        type: "essay",
+        text: synthesisPatterns[i % synthesisPatterns.length],
+        points: 5 // Highest points for synthesis
+      });
+    }
+  }
+  
+  return questions.slice(0, count);
 }
 
 async function evaluateSubmission(questions: Question[], answers: Record<string, string | string[]>): Promise<any> {
-  // Enhanced AI evaluation function
+  // Advanced AI-powered submission evaluation
   let totalScore = 0;
   let maxScore = 0;
   const questionFeedback: Record<string, any> = {};
@@ -223,10 +721,11 @@ async function evaluateSubmission(questions: Question[], answers: Record<string,
     const userAnswer = answers[questionId];
     maxScore += question.points;
     
+    // Handle unanswered questions
     if (!userAnswer) {
       questionFeedback[questionId] = {
         points: 0,
-        feedback: "No answer provided",
+        feedback: "No answer was provided for this question.",
         isCorrect: false
       };
       continue;
@@ -236,76 +735,164 @@ async function evaluateSubmission(questions: Question[], answers: Record<string,
     let earnedPoints = 0;
     let feedback = "";
     
+    // Evaluation based on question type
     if (question.type === 'multiple_choice') {
-      if (userAnswer === question.correctAnswer) {
+      // For multiple choice, exact matching is required
+      const correctAnswerText = typeof question.correctAnswer === 'string' ? question.correctAnswer : '';
+      
+      if (userAnswer === correctAnswerText) {
         isCorrect = true;
         earnedPoints = question.points;
-        feedback = "Correct! Your answer aligns with the material perfectly.";
+        feedback = "Correct! Your answer perfectly matches what's described in the study materials.";
       } else {
-        // Calculate partial credit based on similarity to correct answer
-        const partialCredit = Math.floor(question.points * 0.25); // 25% credit for attempt
-        earnedPoints = partialCredit;
-        feedback = `The correct answer from the material was: "${question.correctAnswer}". Your answer has some differences from what was presented in the learning material.`;
+        // Calculate partial credit based on textual similarity
+        if (typeof userAnswer === 'string' && typeof correctAnswerText === 'string') {
+          // Use string similarity for partial credit
+          const similarity = calculateTextSimilarity(userAnswer, correctAnswerText);
+          
+          if (similarity > 0.7) {
+            earnedPoints = Math.floor(question.points * 0.5); // 50% credit for very similar answers
+            feedback = `Your answer is close, but not exactly correct. The correct answer from the material was: "${correctAnswerText}".`;
+          } else if (similarity > 0.3) {
+            earnedPoints = Math.floor(question.points * 0.2); // 20% credit for somewhat similar answers
+            feedback = `Your answer contains some correct elements, but misses key points. The correct answer was: "${correctAnswerText}".`;
+          } else {
+            earnedPoints = 0;
+            feedback = `Your answer differs from what's presented in the material. The correct answer was: "${correctAnswerText}".`;
+          }
+        }
       }
     } else if (question.type === 'short_answer') {
-      // More sophisticated evaluation for short answers
+      // For short answers, semantic evaluation
       if (typeof userAnswer === 'string' && typeof question.correctAnswer === 'string') {
-        // Check for exact match or significant overlap
-        if (userAnswer.toLowerCase().includes(question.correctAnswer.toLowerCase()) || 
-            question.correctAnswer.toLowerCase().includes(userAnswer.toLowerCase())) {
+        const correctAnswerText = question.correctAnswer;
+        
+        // Calculate content match scores
+        const exactMatch = userAnswer.toLowerCase().includes(correctAnswerText.toLowerCase()) || 
+                         correctAnswerText.toLowerCase().includes(userAnswer.toLowerCase());
+        
+        // Extract key terms and concepts
+        const keyTerms = extractKeyTerms(correctAnswerText);
+        const userTerms = extractKeyTerms(userAnswer);
+        
+        // Calculate key term match percentage
+        const termMatch = calculateTermMatch(keyTerms, userTerms);
+        
+        // Determine answer correctness and feedback
+        if (exactMatch || termMatch > 0.8) {
           isCorrect = true;
           earnedPoints = question.points;
-          feedback = "Excellent! Your answer demonstrates a strong understanding of the material.";
+          feedback = "Excellent! Your answer fully captures the concepts from the study materials.";
+        } else if (termMatch > 0.6) {
+          earnedPoints = Math.floor(question.points * 0.8);
+          feedback = "Good answer! You've captured most of the key concepts from the material.";
+        } else if (termMatch > 0.4) {
+          earnedPoints = Math.floor(question.points * 0.6);
+          feedback = "Your answer contains several relevant concepts, but is missing some important points.";
+        } else if (termMatch > 0.2) {
+          earnedPoints = Math.floor(question.points * 0.3);
+          feedback = "Your answer touches on a few relevant ideas, but misses most of the key concepts from the material.";
         } else {
-          // Check for partial keyword matches
-          const correctKeywords = question.correctAnswer.toLowerCase().split(/\s+/).filter(w => w.length > 4);
-          const userKeywords = userAnswer.toLowerCase().split(/\s+/).filter(w => w.length > 4);
-          
-          const matchingKeywords = correctKeywords.filter(keyword => 
-            userKeywords.some(userWord => userWord.includes(keyword) || keyword.includes(userWord))
+          earnedPoints = Math.floor(question.points * 0.1);
+          feedback = "Your answer appears to be off-topic or misses the key concepts from the material.";
+        }
+        
+        // Add specific feedback about missing key terms
+        if (termMatch < 1.0 && termMatch > 0.2) {
+          const missingTerms = keyTerms.filter(term => 
+            !userTerms.some(userTerm => 
+              userTerm.includes(term) || term.includes(userTerm)
+            )
           );
           
-          const matchRatio = correctKeywords.length > 0 ? 
-            matchingKeywords.length / correctKeywords.length : 0;
-          
-          // Assign points based on keyword match ratio
-          if (matchRatio > 0.7) {
-            earnedPoints = Math.floor(question.points * 0.8);
-            feedback = "Good answer! You've captured most of the key concepts from the material.";
-          } else if (matchRatio > 0.4) {
-            earnedPoints = Math.floor(question.points * 0.5);
-            feedback = "Your answer contains some relevant concepts, but could be more comprehensive.";
-          } else {
-            earnedPoints = Math.floor(question.points * 0.2);
-            feedback = "Your answer is on the right track, but misses key concepts from the material.";
+          if (missingTerms.length > 0 && missingTerms.length <= 3) {
+            feedback += ` Consider including these concepts: ${missingTerms.join(", ")}.`;
           }
         }
       }
     } else if (question.type === 'essay') {
-      // More detailed essay evaluation
+      // Essay evaluation considers content, depth, and organization
       if (typeof userAnswer === 'string') {
-        const wordCount = userAnswer.split(/\s+/).length;
+        const essayText = userAnswer;
+        const wordCount = essayText.split(/\s+/).length;
         
-        // Base evaluation on depth (approximated by word count)
-        if (wordCount > 150) {
-          earnedPoints = Math.floor(question.points * 0.9); // 90% for comprehensive answers
-          feedback = "Excellent essay! Your response is thorough and shows deep understanding of the material.";
+        // Extract topic-related terms if the question text contains topics
+        const questionTopics = extractTopicsFromQuestion(question.text);
+        
+        // Check if essay addresses the topics
+        const topicCoverage = evaluateTopicCoverage(essayText, questionTopics);
+        
+        // Base points on length, structure, and topic coverage
+        let pointsFromLength = 0;
+        let depthFeedback = "";
+        
+        // Length assessment
+        if (wordCount > 200) {
+          pointsFromLength = question.points * 0.4; // 40% from sufficient length
+          depthFeedback = "Your essay has good depth. ";
         } else if (wordCount > 100) {
-          earnedPoints = Math.floor(question.points * 0.7); // 70% for good answers
-          feedback = "Good essay. You've covered important aspects, but could expand on some points.";
+          pointsFromLength = question.points * 0.3; // 30% from moderate length
+          depthFeedback = "Your essay has moderate depth. ";
         } else if (wordCount > 50) {
-          earnedPoints = Math.floor(question.points * 0.5); // 50% for basic answers
-          feedback = "Your essay contains basic concepts, but needs more depth and analysis.";
+          pointsFromLength = question.points * 0.15; // 15% from minimal length
+          depthFeedback = "Your essay could benefit from more depth. ";
         } else {
-          earnedPoints = Math.floor(question.points * 0.3); // 30% for minimal answers
-          feedback = "Your response is too brief. Consider expanding your analysis with specific examples from the material.";
+          pointsFromLength = question.points * 0.05; // 5% from insufficient length
+          depthFeedback = "Your essay is too brief to fully address the topic. ";
         }
+        
+        // Structure and organization assessment
+        const hasIntroduction = evaluateHasIntroduction(essayText);
+        const hasConclusion = evaluateHasConclusion(essayText);
+        const hasParagraphStructure = evaluateHasParagraphs(essayText);
+        
+        let structurePoints = 0;
+        let structureFeedback = "";
+        
+        if (hasIntroduction && hasConclusion && hasParagraphStructure) {
+          structurePoints = question.points * 0.3; // 30% from good structure
+          structureFeedback = "Your essay is well-structured with clear introduction, body, and conclusion. ";
+        } else if ((hasIntroduction || hasConclusion) && hasParagraphStructure) {
+          structurePoints = question.points * 0.2; // 20% from decent structure
+          structureFeedback = "Your essay shows good organization but could be improved with a stronger " + 
+                             (hasIntroduction ? "conclusion." : "introduction.");
+        } else if (hasParagraphStructure) {
+          structurePoints = question.points * 0.1; // 10% from basic structure
+          structureFeedback = "Your essay uses paragraphs effectively but needs clearer introduction and conclusion. ";
+        } else {
+          structureFeedback = "Consider organizing your essay with clear paragraphs, introduction, and conclusion. ";
+        }
+        
+        // Content relevance
+        let contentPoints = 0;
+        let contentFeedback = "";
+        
+        if (topicCoverage > 0.8) {
+          contentPoints = question.points * 0.3; // 30% from excellent topic coverage
+          contentFeedback = "Your essay thoroughly addresses all key aspects of the topic. ";
+        } else if (topicCoverage > 0.5) {
+          contentPoints = question.points * 0.2; // 20% from good topic coverage
+          contentFeedback = "Your essay addresses most aspects of the topic. ";
+        } else if (topicCoverage > 0.3) {
+          contentPoints = question.points * 0.1; // 10% from partial topic coverage
+          contentFeedback = "Your essay addresses some aspects of the topic but misses others. ";
+        } else {
+          contentFeedback = "Your essay doesn't adequately address the key aspects of the topic. ";
+        }
+        
+        // Combine scores and feedback
+        earnedPoints = Math.floor(pointsFromLength + structurePoints + contentPoints);
+        feedback = depthFeedback + structureFeedback + contentFeedback;
+        
+        // Cap at maximum points
+        if (earnedPoints > question.points) earnedPoints = question.points;
       } else {
         earnedPoints = 0;
         feedback = "Invalid essay format.";
       }
     }
     
+    // Add to total score
     totalScore += earnedPoints;
     questionFeedback[questionId] = {
       points: earnedPoints,
@@ -314,27 +901,166 @@ async function evaluateSubmission(questions: Question[], answers: Record<string,
     };
   }
   
-  // Calculate percentage and generate overall feedback
+  // Calculate percentage and generate comprehensive overall feedback
   const percentage = Math.round((totalScore / maxScore) * 100);
   let overallFeedback = `You scored ${totalScore} out of ${maxScore} points (${percentage}%). `;
   
+  // Categorized feedback based on score
   if (percentage >= 90) {
-    overallFeedback += "Outstanding work! You've demonstrated excellent understanding of the material.";
+    overallFeedback += "Outstanding work! You've demonstrated excellent understanding of the material. " +
+      "Your answers show comprehensive knowledge of the key concepts and their relationships.";
   } else if (percentage >= 80) {
-    overallFeedback += "Great job! You have a strong grasp of most concepts in the material.";
+    overallFeedback += "Great job! You have a strong grasp of most concepts in the material. " +
+      "Continue to focus on making connections between related ideas for even deeper understanding.";
   } else if (percentage >= 70) {
-    overallFeedback += "Good work. You understand the core concepts but there's room for improvement.";
+    overallFeedback += "Good work. You understand the core concepts but there's room for improvement. " +
+      "Try to focus on the details and relationships between different topics in the material.";
   } else if (percentage >= 60) {
-    overallFeedback += "You've grasped some of the concepts, but should review the material more carefully.";
+    overallFeedback += "You've grasped some of the important concepts, but should review the material more carefully. " +
+      "Pay particular attention to definitions and key processes described in the text.";
   } else {
-    overallFeedback += "You should revisit the material and focus on understanding the key concepts.";
+    overallFeedback += "You should revisit the material and focus on understanding the key concepts. " +
+      "Take notes on important definitions, processes, and relationships between topics.";
   }
   
   return {
     overallFeedback,
-    score: percentage, // Return percentage score instead of raw points
+    score: percentage, // Return percentage score
     questionFeedback
   };
+}
+
+// Helper functions for evaluating submissions
+
+// Calculate text similarity ratio
+function calculateTextSimilarity(text1: string, text2: string): number {
+  const t1 = text1.toLowerCase();
+  const t2 = text2.toLowerCase();
+  
+  if (t1 === t2) return 1.0;
+  if (t1.length === 0 || t2.length === 0) return 0.0;
+  
+  // Simple Jaccard similarity of word sets
+  const words1 = new Set(t1.split(/\s+/).filter(w => w.length > 3));
+  const words2 = new Set(t2.split(/\s+/).filter(w => w.length > 3));
+  
+  if (words1.size === 0 || words2.size === 0) return 0.0;
+  
+  let intersection = 0;
+  for (const word of words1) {
+    if (words2.has(word)) intersection++;
+  }
+  
+  return intersection / (words1.size + words2.size - intersection);
+}
+
+// Extract key terms from text
+function extractKeyTerms(text: string): string[] {
+  const words = text.toLowerCase()
+    .replace(/[^\w\s]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length > 3);
+  
+  // Remove common stop words
+  const stopWords = new Set([
+    'the', 'and', 'that', 'have', 'for', 'not', 'with', 'you', 'this', 'but', 
+    'his', 'her', 'they', 'from', 'she', 'will', 'been', 'were', 'what', 'when',
+    'where', 'how', 'all', 'any', 'both', 'each', 'more', 'some', 'such', 'than'
+  ]);
+  
+  return words.filter(w => !stopWords.has(w));
+}
+
+// Calculate the match between term sets
+function calculateTermMatch(keyTerms: string[], userTerms: string[]): number {
+  if (keyTerms.length === 0) return 0;
+  
+  let matches = 0;
+  for (const keyTerm of keyTerms) {
+    if (userTerms.some(userTerm => 
+      userTerm.includes(keyTerm) || keyTerm.includes(userTerm)
+    )) {
+      matches++;
+    }
+  }
+  
+  return matches / keyTerms.length;
+}
+
+// Extract topics from essay question
+function extractTopicsFromQuestion(questionText: string): string[] {
+  // Look for topics after certain phrases
+  const topicPatterns = [
+    /discuss\s+(?:the\s+)?([\w\s]+)(?:\s+and\s+)/i,
+    /analyze\s+(?:the\s+)?([\w\s]+)(?:\s+and\s+)/i,
+    /compare\s+(?:the\s+)?([\w\s]+)(?:\s+and\s+)/i,
+    /evaluate\s+(?:the\s+)?([\w\s]+)(?:\s+as\s+)/i,
+    /implications\s+of\s+([\w\s]+)(?:\s+as\s+)/i
+  ];
+  
+  const topics: string[] = [];
+  
+  for (const pattern of topicPatterns) {
+    const match = questionText.match(pattern);
+    if (match && match[1]) {
+      topics.push(match[1].trim());
+    }
+  }
+  
+  // If no topics found with patterns, try extracting nouns
+  if (topics.length === 0) {
+    const words = questionText.split(/\s+/);
+    for (let i = 0; i < words.length; i++) {
+      const word = words[i];
+      if (/^[A-Z][a-z]{3,}$/.test(word) && i > 0) {
+        topics.push(word);
+      }
+    }
+  }
+  
+  return topics;
+}
+
+// Evaluate how well the essay covers the expected topics
+function evaluateTopicCoverage(essayText: string, topics: string[]): number {
+  if (topics.length === 0) return 0.5; // Default middle value if no topics identified
+  
+  let matchCount = 0;
+  for (const topic of topics) {
+    const topicLower = topic.toLowerCase();
+    if (essayText.toLowerCase().includes(topicLower)) {
+      // For each occurrence, add to the match count
+      const regex = new RegExp(topicLower, 'gi');
+      const matches = essayText.match(regex);
+      matchCount += matches ? matches.length : 0;
+    }
+  }
+  
+  // Normalize score between 0 and 1, with diminishing returns after 2 mentions per topic
+  const expectedMentions = topics.length * 2;
+  return Math.min(1, matchCount / expectedMentions);
+}
+
+// Check if the essay has an introduction
+function evaluateHasIntroduction(essay: string): boolean {
+  const firstParagraph = essay.split(/\n\s*\n/)[0] || '';
+  return firstParagraph.length > 30 && 
+         !/^(?:first|second|then|also|moreover|furthermore|however)/i.test(firstParagraph);
+}
+
+// Check if the essay has a conclusion
+function evaluateHasConclusion(essay: string): boolean {
+  const paragraphs = essay.split(/\n\s*\n/);
+  const lastParagraph = paragraphs[paragraphs.length - 1] || '';
+  
+  return lastParagraph.length > 30 && 
+         /(?:conclusion|in\s+summary|to\s+conclude|in\s+conclusion|therefore|thus|overall|in\s+short)/i.test(lastParagraph);
+}
+
+// Check if the essay has reasonable paragraph structure
+function evaluateHasParagraphs(essay: string): boolean {
+  const paragraphs = essay.split(/\n\s*\n/).filter(p => p.trim().length > 0);
+  return paragraphs.length >= 3;
 }
 
 // Authentication middleware
