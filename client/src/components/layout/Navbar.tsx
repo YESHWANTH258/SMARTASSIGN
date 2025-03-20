@@ -24,8 +24,12 @@ const Navbar = () => {
         <div className="flex justify-between h-16">
           <div className="flex items-center">
             <div className="flex-shrink-0 flex items-center">
-              <i className="ri-brain-line text-primary text-3xl mr-2"></i>
-              <span className="font-bold text-xl text-slate-800">EduAI</span>
+              <Link href="/">
+                <div className="flex items-center cursor-pointer">
+                  <i className="ri-brain-line text-primary text-3xl mr-2"></i>
+                  <span className="font-bold text-xl text-slate-800">EduAI</span>
+                </div>
+              </Link>
             </div>
           </div>
           
@@ -50,10 +54,15 @@ const Navbar = () => {
             </button>
             <Button 
               onClick={() => scrollToSection('waitlist')}
-              className="bg-emerald-500 hover:bg-emerald-600"
+              className="mr-2"
             >
               Join Waitlist
             </Button>
+            <Link href="/login">
+              <Button variant="outline">
+                Login
+              </Button>
+            </Link>
           </div>
           
           <div className="flex items-center md:hidden">
@@ -86,10 +95,15 @@ const Navbar = () => {
                   </button>
                   <Button 
                     onClick={() => scrollToSection('waitlist')}
-                    className="bg-emerald-500 hover:bg-emerald-600 w-full"
+                    className="w-full"
                   >
                     Join Waitlist
                   </Button>
+                  <Link href="/login">
+                    <Button variant="outline" className="w-full">
+                      Login
+                    </Button>
+                  </Link>
                 </div>
               </SheetContent>
             </Sheet>
