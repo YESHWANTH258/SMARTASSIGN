@@ -1570,6 +1570,141 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // AI assistance endpoint
+  app.post("/api/ai-assist", authMiddleware, async (req, res) => {
+    try {
+      const { question, mode, context } = req.body;
+      const userId = req.headers["x-user-id"];
+
+      if (!userId) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      // Here you would integrate with your preferred AI service (e.g., OpenAI)
+      // For now, we'll return mock responses based on the mode
+      let response = "";
+      
+      if (mode === "assignment") {
+        response = `Here's how you can approach this ${context.title}:\n\n` +
+          "1. First, carefully read through all the questions\n" +
+          "2. Break down each question into smaller parts\n" +
+          "3. Use the study materials to find relevant information\n" +
+          "4. Take your time to formulate clear and complete answers";
+      } else if (mode === "performance") {
+        const performance = context;
+        const overallScore = performance?.overallProgress || 0;
+        
+        response = `Based on your performance:\n\n` +
+          `Your overall progress is ${overallScore}%.\n` +
+          "Here are some recommendations:\n" +
+          "1. Focus on completing assignments regularly\n" +
+          "2. Review feedback from previous submissions\n" +
+          "3. Participate in class discussions\n" +
+          "4. Don't hesitate to ask for help when needed";
+      }
+
+      res.json({ response });
+    } catch (error) {
+      console.error("AI assist error:", error);
+      res.status(500).json({ error: "Failed to get AI assistance" });
+    }
+  });
+
+  // Student Performance endpoint
+  app.get("/api/student/performance", authMiddleware, async (req, res) => {
+    try {
+      const userId = req.headers["x-user-id"];
+
+      if (!userId) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      // Get student's submissions
+      const submissions = await storage.getSubmissionsByStudent(Number(userId));
+      const assignments = await storage.getAssignmentsForStudent();
+
+      // Calculate performance metrics
+      const completedAssignments = submissions.length;
+      const totalAssignments = assignments.length;
+      const overallProgress = Math.round((completedAssignments / totalAssignments) * 100);
+
+      // Get recent assignments with class averages
+      const recentAssignments = await Promise.all(
+        submissions.slice(-5).map(async (submission) => {
+          const assignment = assignments.find(a => a.id === submission.assignmentId);
+          const allSubmissions = await storage.getSubmissionsByAssignment(submission.assignmentId);
+          
+          const classAverage = Math.round(
+            allSubmissions.reduce((sum, s) => sum + s.score, 0) / allSubmissions.length
+          );
+
+          return {
+            id: submission.id,
+            title: assignment?.title || "Unknown Assignment",
+            score: submission.score,
+            classAverage
+          };
+        })
+      );
+
+      res.json({
+        overallProgress,
+        completedAssignments,
+        totalAssignments,
+        recentAssignments
+      });
+    } catch (error) {
+      console.error("Performance fetch error:", error);
+      res.status(500).json({ error: "Failed to fetch performance data" });
+    }
+  });
+
+  // Class Performance endpoint
+  app.get("/api/class/performance", authMiddleware, async (req, res) => {
+    try {
+      const userId = req.headers["x-user-id"];
+
+      if (!userId) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      // Get all students and their submissions
+      const allUsers = await storage.getAllUsers();
+      const students = allUsers.filter(user => user.role === 'student');
+      const assignments = await storage.getAssignmentsForStudent();
+
+      const classPerformance = await Promise.all(
+        students.map(async (student) => {
+          const submissions = await storage.getSubmissionsByStudent(student.id);
+          const completedAssignments = submissions.length;
+          const totalAssignments = assignments.length;
+          
+          const overallScore = submissions.length > 0
+            ? Math.round(submissions.reduce((sum, sub) => sum + sub.score, 0) / submissions.length)
+            : 0;
+
+          const progress = Math.round((completedAssignments / totalAssignments) * 100);
+
+          return {
+            id: student.id,
+            name: student.name,
+            overallScore,
+            completedAssignments,
+            progress
+          };
+        })
+      );
+
+      // Sort by overall score in descending order
+      classPerformance.sort((a, b) => b.overallScore - a.overallScore);
+
+      res.json(classPerformance);
+    } catch (error) {
+      console.error("Class performance fetch error:", error);
+      res.status(500).json({ error: "Failed to fetch class performance data" });
+    }
+  });
+
   const httpServer = createServer(app);
 
   return httpServer;

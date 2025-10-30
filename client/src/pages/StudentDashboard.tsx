@@ -50,6 +50,7 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion";
 import { Progress } from "@/components/ui/progress";
+import { AIAssistant } from "@/components/AIAssistant";
 
 const StudentDashboard = () => {
   const [, setLocation] = useLocation();
@@ -61,6 +62,10 @@ const StudentDashboard = () => {
   const [answers, setAnswers] = useState<Record<string, string | string[]>>({});
   const [feedbackDialogOpen, setFeedbackDialogOpen] = useState(false);
   const [selectedSubmission, setSelectedSubmission] = useState<any>(null);
+  const [aiQuestion, setAiQuestion] = useState("");
+  const [aiResponse, setAiResponse] = useState("");
+  const [isAiLoading, setIsAiLoading] = useState(false);
+  const [showPerformanceDialog, setShowPerformanceDialog] = useState(false);
   
   useEffect(() => {
     // Check if user is logged in
@@ -220,6 +225,54 @@ const StudentDashboard = () => {
     return submissionsQuery.data.find((sub: any) => sub.assignmentId === assignmentId);
   };
   
+  // AI Assistant for assignments
+  const handleAskAI = async () => {
+    if (!aiQuestion.trim()) {
+      toast({
+        title: "Empty question",
+        description: "Please enter your question",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsAiLoading(true);
+    try {
+      const response = await apiRequest("POST", "/api/ai-assist", {
+        question: aiQuestion,
+        context: selectedAssignment,
+        type: "assignment"
+      });
+      setAiResponse(response.answer);
+    } catch (error) {
+      toast({
+        title: "AI Assistant Error",
+        description: "Failed to get AI assistance. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsAiLoading(false);
+    }
+  };
+
+  // Performance Analysis
+  const performanceQuery = useQuery({
+    queryKey: ["/api/student/performance", user?.id],
+    queryFn: () => apiRequest("GET", "/api/student/performance", null, {
+      headers: { "x-user-id": user?.id.toString() }
+    }),
+    enabled: !!user?.id,
+  });
+
+  // Class Performance Query
+  const classPerformanceQuery = useQuery({
+    queryKey: ["/api/class/performance"],
+    queryFn: () => apiRequest("GET", "/api/class/performance", null, {
+      headers: { "x-user-id": user?.id.toString() }
+    }),
+    enabled: !!user?.id,
+  });
+  
   if (!user) {
     return <div className="flex justify-center items-center h-screen">Loading...</div>;
   }
@@ -248,6 +301,7 @@ const StudentDashboard = () => {
           <TabsList className="mb-6">
             <TabsTrigger value="assignments">Available Assignments</TabsTrigger>
             <TabsTrigger value="submissions">My Submissions</TabsTrigger>
+            <TabsTrigger value="performance">Performance Analysis</TabsTrigger>
           </TabsList>
           
           <TabsContent value="assignments">
@@ -451,6 +505,91 @@ const StudentDashboard = () => {
                 </TableBody>
               </Table>
             )}
+          </TabsContent>
+          
+          <TabsContent value="performance">
+            <div className="space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Your Performance Overview</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {performanceQuery.data && (
+                    <div className="space-y-4">
+                      <div>
+                        <h3 className="font-semibold mb-2">Overall Progress</h3>
+                        <Progress value={performanceQuery.data.overallProgress} />
+                        <p className="text-sm text-gray-500 mt-1">
+                          {performanceQuery.data.completedAssignments} of {performanceQuery.data.totalAssignments} assignments completed
+                        </p>
+                      </div>
+                      <div>
+                        <h3 className="font-semibold mb-2">Recent Performance</h3>
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Assignment</TableHead>
+                              <TableHead>Score</TableHead>
+                              <TableHead>Class Average</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {performanceQuery.data.recentAssignments.map((assignment: any) => (
+                              <TableRow key={assignment.id}>
+                                <TableCell>{assignment.title}</TableCell>
+                                <TableCell>{assignment.score}%</TableCell>
+                                <TableCell>{assignment.classAverage}%</TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* AI Performance Analysis */}
+              <AIAssistant 
+                mode="performance"
+                context={performanceQuery.data}
+                placeholder="Ask about your performance trends, areas for improvement, or study recommendations..."
+              />
+
+              {/* Class Performance Comparison */}
+              <Card className="lg:col-span-2">
+                <CardHeader>
+                  <CardTitle>Class Performance Overview</CardTitle>
+                  <CardDescription>See how you compare with your classmates</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {classPerformanceQuery.data && (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Student</TableHead>
+                          <TableHead>Overall Score</TableHead>
+                          <TableHead>Assignments Completed</TableHead>
+                          <TableHead>Progress</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {classPerformanceQuery.data.map((student: any) => (
+                          <TableRow key={student.id}>
+                            <TableCell>{student.name}</TableCell>
+                            <TableCell>{student.overallScore}%</TableCell>
+                            <TableCell>{student.completedAssignments}</TableCell>
+                            <TableCell>
+                              <Progress value={student.progress} className="w-[100px]" />
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
           </TabsContent>
         </Tabs>
       </div>
